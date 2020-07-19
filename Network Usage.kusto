@@ -1,0 +1,23 @@
+// Total MB Received
+Perf
+| where TimeGenerated > ago(10m) 
+| where ObjectName == "Network Adapter"
+    and CounterName == "Bytes Received/sec"
+     //and CounterName == "Bytes Total/sec"
+| extend Total_MB_Received = CounterValue/1000
+| summarize Total_MB = avg(Total_MB_Received)  by Computer, bin(TimeGenerated, 1m) 
+| render timechart with (title = "Total Bytes Received Over Time")
+//| summarize avg(CounterValue) by Computer , bin(TimeGenerated, 1m) 
+//| render timechart with (title = "Network Traffic")
+
+// Total MB Sent
+Perf
+| where TimeGenerated > ago(10m) 
+| where ObjectName == "Network Adapter"
+    and CounterName == "Bytes Sent/sec"
+     //and CounterName == "Bytes Total/sec"
+| extend Total_MB_Received = CounterValue/1000
+| summarize Total_MB = avg(Total_MB_Received)  by Computer, bin(TimeGenerated, 1m) 
+| render timechart with (title = "Total Bytes Sent Over Time")
+//| summarize avg(CounterValue) by Computer , bin(TimeGenerated, 1m) 
+//| render timechart with (title = "Network Traffic")

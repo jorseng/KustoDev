@@ -1,0 +1,6 @@
+Perf
+| where TimeGenerated > ago(12h)
+| where ObjectName == "Memory" and CounterName == "Available MBytes" 
+| extend Available_GBytes = CounterValue/1024
+| summarize Available_RAM_GB = avg(Available_GBytes)  by Computer, bin(TimeGenerated, 1m) 
+| render timechart with (title = "Available RAM Over Time")

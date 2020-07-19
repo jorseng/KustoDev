@@ -1,0 +1,20 @@
+// Time chart
+Perf
+| where TimeGenerated > ago(8h)
+| where ObjectName == "LogicalDisk" 
+    and CounterName == "% Free Space" 
+| extend Used_Disk_Percentage = 100 - CounterValue 
+| summarize Used_Disk_Percentage = avg(Used_Disk_Percentage) by Computer, bin(TimeGenerated, 1m)
+| render timechart with (title = "Disk Usage Over Time")
+
+// Bar Chart
+Perf
+| where TimeGenerated > ago(10m)
+| where ObjectName == "LogicalDisk" 
+    and CounterName == "% Free Space" 
+    and InstanceName == "_Total"
+| extend Used_Disk_Percentage = 100 - CounterValue 
+| project Computer, ObjectName, CounterName , Used_Disk_Percentage
+| summarize Used_Disk_Percentage = avg(Used_Disk_Percentage) by Computer
+| render barchart
+

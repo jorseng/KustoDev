@@ -1,0 +1,5 @@
+Perf
+| where TimeGenerated > ago(8h)
+| where ObjectName == "Processor" and CounterName == "% Processor Time"
+| summarize CPU_Percentage_Usage = avg(CounterValue) by bin(TimeGenerated, 1m), Computer
+| render timechart with (title = "CPU Usage Over Time")

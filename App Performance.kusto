@@ -1,0 +1,9 @@
+Perf
+| where TimeGenerated >= ago(1h)
+| where ObjectName == "Processor"
+              and CounterName == "% Processor Time"
+              and InstanceName!="_Total" // Uncomment this line to exclude Total CPU Usage, on focus on other processes
+| summarize Total_CPU_Percentage = avg(CounterValue)  by InstanceName, bin(TimeGenerated, 10m)
+| render timechart with (title = "CPU Usage by Process Over Time")
+
+

@@ -1,0 +1,40 @@
+let linuxNetworkSend=Perf 
+    | where TimeGenerated {TimeRange} 
+    | where ObjectName == 'Network' and CounterName == 'Total Bytes Transmitted'
+    | order by CounterName asc, InstanceName, Computer asc, TimeGenerated asc
+    | extend prev_Computer=prev(Computer), prev_Value=prev(CounterValue), prev_t=prev(TimeGenerated), prev_counter=prev(CounterName), prev_instance=prev(InstanceName)
+    | project   TimeGenerated, Computer, CounterValue = iff(prev_Computer == Computer and prev_instance == InstanceName and prev_counter == CounterName and CounterValue >= prev_Value and TimeGenerated > prev_t, (CounterValue-prev_Value)/((TimeGenerated-prev_t)/1s), real(0))
+    | summarize hint.shufflekey=Computer CounterValue = sum(CounterValue) by Computer, bin(TimeGenerated, 2s);
+let windowsNetworkSend = Perf 
+    | where TimeGenerated {TimeRange} 
+    | where ObjectName == 'Network Adapter' and CounterName == 'Bytes Sent/sec'
+    | summarize hint.shufflekey=Computer CounterValue = sum(CounterValue) by Computer, bin(TimeGenerated, 2s);
+let networkDataSend = union linuxNetworkSend, windowsNetworkSend;
+let networkSendSummary = totable(networkDataSend
+    | where TimeGenerated {TimeRange}
+    | summarize hint.shufflekey=Computer {aggregateLeftValue} by Computer
+    | top 10 by {aggregateLeftLabel} {aggregateOrderLeft});
+let computerList=(networkSendSummary | project Computer);
+let EmptyNodeIdentityAndProps = datatable(Computer:string, NodeId:string, NodeProps:dynamic, Priority: long) [];
+let OmsNodeIdentityAndProps = computerList
+    | extend NodeId = Computer
+    | extend Priority = 1
+    | extend NodeProps = pack('type', 'StandAloneNode', 'name', Computer);
+let ServiceMapNodeIdentityAndProps = ServiceMapComputer_CL
+    | where TimeGenerated {TimeRange}
+    | where Computer in (computerList)
+    | summarize arg_max(TimeGenerated, *) by Computer
+    | extend Computer = ComputerName_s, AzureCloudServiceNodeIdentity = iif(isnotempty(columnifexists('AzureCloudServiceName_s', '')), strcat(columnifexists('AzureCloudServiceInstanceId_s', ''), '|',                     columnifexists('AzureCloudServiceDeployment_g', '')), ''),          AzureScaleSetNodeIdentity = iif(isnotempty(columnifexists('AzureVmScaleSetName_s', '')),              strcat(columnifexists('AzureVmScaleSetInstanceId_s', ''), '|',                     columnifexists('AzureVmScaleSetDeployment_g', '')), ''),          ComputerProps =              pack('type', 'StandAloneNode',                   'name', ComputerName_s,                   'mappingResourceId', ResourceId,                   'subscriptionId', AzureSubscriptionId_g,                   'resourceGroup', AzureResourceGroup_s,                   'azureResourceId', columnifexists('AzureResourceId_s', '')),          AzureCloudServiceNodeProps =              pack('type', 'AzureCloudServiceNode',                   'cloudServiceInstanceId', columnifexists('AzureCloudServiceInstanceId_s', ''),                   'cloudServiceRoleName', columnifexists('AzureCloudServiceRoleName_s', ''),                   'cloudServiceDeploymentId', columnifexists('AzureCloudServiceDeployment_g', ''),                   'cloudServiceName', columnifexists('AzureCloudServiceName_s', ''),                   'mappingResourceId', ResourceId),          AzureScaleSetNodeProps =               pack('type', 'AzureScaleSetNode',                   'scaleSetInstanceId', columnifexists('AzureName_s', ''),                   'vmScaleSetDeploymentId', columnifexists('AzureVmScaleSetDeployment_g', ''),                   'vmScaleSetName', columnifexists('AzureVmScaleSetName_s', ''),                   'serviceFabricClusterName', columnifexists('AzureServiceFabricClusterName_s', ''),                   'vmScaleSetResourceId', columnifexists('AzureVmScaleSetResourceId_s', ''),                   'resourceGroupName', columnifexists('AzureResourceGroup_s', ''),                   'subscriptionId', columnifexists('AzureSubscriptionId_g', ''),                   'mappingResourceId', ResourceId)| project   Computer,            NodeId = case(isnotempty(AzureCloudServiceNodeIdentity), AzureCloudServiceNodeIdentity,                       isnotempty(AzureScaleSetNodeIdentity), AzureScaleSetNodeIdentity, Computer),            NodeProps = case(isnotempty(AzureCloudServiceNodeIdentity), AzureCloudServiceNodeProps,                          isnotempty(AzureScaleSetNodeIdentity), AzureScaleSetNodeProps, ComputerProps),            Priority = 2;
+let NodeIdentityAndProps = union kind=inner isfuzzy = true                                  EmptyNodeIdentityAndProps, OmsNodeIdentityAndProps, ServiceMapNodeIdentityAndProps                            
+    | summarize arg_max(Priority, *) by Computer; 
+let NodeIdentityAndPropsMin = NodeIdentityAndProps
+    | extend Kind = iff(NodeProps.type == "StandAloneNode", iff(NodeProps.azureResourceId == "", "Non-Azure Virtual Machine", "Azure Virtual Machine"), NodeProps.type), 
+    ResourceId = iff(NodeProps.type == "AzureScaleSetNode", NodeProps.vmScaleSetResourceId, 
+        iff(NodeProps.type == "AzureCloudServiceNode", NodeProps.cloudServiceDeploymentId, Computer)),
+    ResourceName = iff(NodeProps.type == "AzureScaleSetNode", NodeProps.scaleSetInstanceId, 
+        iff(NodeProps.type == "AzureCloudServiceNode", NodeProps.cloudServiceInstanceId, Computer))
+    | project Computer, Kind, ResourceId, ResourceName;
+networkDataSend
+    | where Computer in (computerList)
+    | join kind=leftouter (NodeIdentityAndPropsMin) on Computer
+    | summarize {aggregateLeftValue} by bin(TimeGenerated, ({TimeRange:end} - {TimeRange:start})/100), ResourceName
